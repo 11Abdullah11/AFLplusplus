@@ -28,7 +28,7 @@
 #include <limits.h>
 #include <errno.h>
 #include <sys/mman.h>
-#include  "rbtree.h"
+#include "rbtree.h"
 #ifdef __APPLE__
 #include <mach/vm_statistics.h>
 #endif
@@ -164,50 +164,58 @@ static u32          alloc_canary;
 struct rb_root mytree = RB_ROOT;
 
 struct rb_data {
-    struct rb_node node;
-    void *address;
+
+  struct rb_node node;
+  void *         address;
+
 };
 
+int rb_insert_address(struct rb_root *root, struct rb_data *data) {
 
-int rb_insert_address(struct rb_root *root, struct rb_data *data)
-  {
-    struct rb_node **new = &(root->rb_node), *parent = NULL;
+  struct rb_node **new = &(root->rb_node), *parent = NULL;
 
-    /* Figure out where to put new node */
-    while (*new) {
-      struct rb_data *this = container_of(*new, struct rb_data, node);
-      
+  /* Figure out where to put new node */
+  while (*new) {
+
+    struct rb_data *this = container_of(*new, struct rb_data, node);
+
     parent = *new;
-      if (data->address < this->address)
-        new = &((*new)->rb_left);
-      else if (data->address > this->address)
-        new = &((*new)->rb_right);
-      else
-        return false;
-    }
+    if (data->address < this->address)
+      new = &((*new)->rb_left);
+    else if (data->address > this->address)
+      new = &((*new)->rb_right);
+    else
+      return false;
 
-    /* Add new node and rebalance tree. */
-    rb_link_node(&data->node, parent, new);
-    rb_insert_color(&data->node, root);
+  }
+
+  /* Add new node and rebalance tree. */
+  rb_link_node(&data->node, parent, new);
+  rb_insert_color(&data->node, root);
 
   return true;
-  }
 
-struct rb_data *rb_search(struct rb_root *root, void* key)
-  {
-    struct rb_node *node = root->rb_node;
+}
 
-    while (node) {
-      struct rb_data *data = container_of(node, struct rb_data, node);
+struct rb_data *rb_search(struct rb_root *root, void *key) {
+
+  struct rb_node *node = root->rb_node;
+
+  while (node) {
+
+    struct rb_data *data = container_of(node, struct rb_data, node);
 
     if (data->address < key)
-        node = node->rb_left;
+      node = node->rb_left;
     else if (data->address > key)
-        node = node->rb_right;
+      node = node->rb_right;
     else
-        return data;
+      return data;
+
   }
+
   return NULL;
+
 }
 
 static void *__dislocator_alloc(size_t len) {
@@ -223,6 +231,7 @@ static void *__dislocator_alloc(size_t len) {
     DEBUGF("total allocs exceed %u MB, returning NULL", max_mem / 1024 / 1024);
 
     return NULL;
+
   }
 
   size_t rlen;
@@ -248,26 +257,53 @@ static void *__dislocator_alloc(size_t len) {
   (void)sp;
 #endif
 
-  /* We will also store buffer length and a canary below the actual buffer, so
-     let's add 8 bytes for that. */
+  /*To use freed memory as guard page, randomly check
+   first node (in sort order) for available memory. */
+  char            rb_flag = 0;
+  struct rb_node *node = rb_first(&mytree);
+  void *          rb_addr = rb_entry(node, struct rb_data, node)->address;
+  ret = (u8 *)mmap(rb_addr - (tlen + PAGE_SIZE), tlen - PAGE_SIZE,
+                   PROT_READ | PROT_WRITE, flags, fd, 0);
 
-  ret = (u8 *)mmap(NULL, tlen, PROT_READ|  PROT_WRITE, flags, fd, 0);
+  if (ret != MAP_FAILED) {
+
+    /*succes allocating near freed region
+      erase used address from rbtree. */
+
+    rb_flag = 1;
+    struct rb_data *data = rb_search(&mytree, rb_addr);
+    if (data) {
+
+      rb_erase(&data->node, &mytree);
+      free(data);
+
+    }
+
+  } else {
+
+    /*fall back to previous malloc*/
+
+    /* We will also store buffer length and a canary below the actual buffer, so
+       let's add 8 bytes for that. */
+    ret = (u8 *)mmap(NULL, tlen, PROT_READ | PROT_WRITE, flags, fd, 0);
 #if defined(USEHUGEPAGE)
-  /* We try one more time with regular call */
-  if (ret == MAP_FAILED) {
+    /* We try one more time with regular call */
+    if (ret == MAP_FAILED) {
 
 #if defined(__APPLE__)
-    fd = -1;
+      fd = -1;
 #elif defined(__linux__)
-    flags &= -MAP_HUGETLB;
+      flags &= -MAP_HUGETLB;
 #elif defined(__FreeBSD__)
-    flags &= -MAP_ALIGNED_SUPER;
+      flags &= -MAP_ALIGNED_SUPER;
 #endif
-    ret = (u8 *)mmap(NULL, tlen, PROT_READ | PROT_WRITE, flags, fd, 0);
+      ret = (u8 *)mmap(NULL, tlen, PROT_READ | PROT_WRITE, flags, fd, 0);
+
+    }
+
+#endif
 
   }
-
-#endif
 
   if (ret == MAP_FAILED) {
 
@@ -281,7 +317,8 @@ static void *__dislocator_alloc(size_t len) {
 
   /* Set PROT_NONE on the last page. */
 
-  if (mprotect(ret + PG_COUNT(rlen + 8) * PAGE_SIZE, PAGE_SIZE, PROT_NONE))
+  if (rb_flag &&
+      mprotect(ret + PG_COUNT(rlen + 8) * PAGE_SIZE, PAGE_SIZE, PROT_NONE))
     FATAL("mprotect() failed when allocating memory");
 
   /* Offset the return pointer so that it's right-aligned to the page
@@ -382,7 +419,7 @@ void free(void *ptr) {
 
   struct rb_data data;
   data.address = ptr;
-  rb_insert_address(&mytree,&data);
+  rb_insert_address(&mytree, &data);
 
   len = PTR_L(ptr);
 
