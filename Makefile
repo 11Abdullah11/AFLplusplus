@@ -295,6 +295,8 @@ afl-analyze: src/afl-analyze.c src/afl-common.o src/afl-sharedmem.o $(COMM_HDR) 
 afl-gotcpu: src/afl-gotcpu.c $(COMM_HDR) | test_x86
 	$(CC) $(CFLAGS) src/$@.c -o $@ $(LDFLAGS)
 
+src/rbtree.o : $(COMM_HDR) src/rbtree.c include/rbtree.h include/rbtree_augmented.h
+	$(CC) $(CFLAGS) $(CFLAGS_FLTO) -c src/rbtree.c  -o src/rbtree.o
 
 # document all mutations and only do one run (use with only one input file!)
 document: include/afl-fuzz.h $(AFL_FUZZ_FILES) src/afl-common.o src/afl-sharedmem.o src/afl-forkserver.o $(COMM_HDR) | test_x86

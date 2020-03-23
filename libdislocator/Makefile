@@ -28,10 +28,13 @@ endif
 all: libdislocator.so
 
 VPATH = ..
-libdislocator.so: libdislocator.so.c ../config.h
-	$(CC) $(CFLAGS) -shared -fPIC $< -o ../$@ $(LDFLAGS)
+libdislocator.so: libdislocator.so.c ../config.h ../src/rbtree.o
+	$(CC) $(CFLAGS) -shared -fPIC $< -o ../$@ ../src/rbtree.o $(LDFLAGS) 
 
 .NOTPARALLEL: clean
+	
+#../src/rbtree.o : $(COMM_HDR) ../src/rbtree.c ../include/rbtree.h ../include/rbtree_augmented.h
+#	$(CC) -c ../src/rbtree.c  -o ../src/rbtree.o
 
 clean:
 	rm -f *.o *.so *~ a.out core core.[1-9][0-9]*
